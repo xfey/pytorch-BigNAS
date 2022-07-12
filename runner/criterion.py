@@ -31,30 +31,46 @@ def CrossEntropyLoss_label_smoothed(pred, target, label_smoothing=0.):
     return CrossEntropyLoss_soft_target(pred, soft_target)
 
 
-class KLLossSoft(torch.nn.modules.loss._Loss):
-    """ inplace distillation for image classification 
-            output: output logits of the student network
-            target: output logits of the teacher network
-            T: temperature
-            KL(p||q) = Ep \log p - \Ep log q
-    """
-    def forward(self, output, soft_logits, target=None, temperature=1., alpha=0.9):
-        output, soft_logits = output / temperature, soft_logits / temperature
-        soft_target_prob = F.softmax(soft_logits, dim=1)
-        output_log_prob = F.log_softmax(output, dim=1)
-        kd_loss = -torch.sum(soft_target_prob * output_log_prob, dim=1)
-        if target is not None:
-            n_class = output.size(1)
-            target = torch.zeros_like(output).scatter(1, target.view(-1, 1), 1)
-            target = target.unsqueeze(1)
-            output_log_prob = output_log_prob.unsqueeze(2)
-            ce_loss = -torch.bmm(target, output_log_prob).squeeze()
-            loss = alpha * temperature * temperature * kd_loss + (1.0 - alpha) * ce_loss
-        else:
-            loss = kd_loss 
+# The KLLoss function wrote by `AttentiveNAS` seems to be wrong, try using this one.
+class KLLossSoft(nn.Module):
+    def __init__(self):
+        super().__init__()
         
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        return loss
+    def forward(self, output, soft_logits, target=None, temperature=1., alpha=0.9):
+        kldivloss = nn.KLDivLoss(reduction='batchmean')(F.log_softmax(output/temperature, dim=1),
+                                                        F.softmax(soft_logits/temperature, dim=1))
+        if target is not None:
+            celoss =  F.cross_entropy(output, target)
+            total_loss = alpha * (temperature**2) * kldivloss + (1. - alpha) * celoss
+        else:
+            total_loss = kldivloss
+        return total_loss
+
+
+# class KLLossSoft(torch.nn.modules.loss._Loss):
+#     """ inplace distillation for image classification 
+#             output: output logits of the student network
+#             target: output logits of the teacher network
+#             T: temperature
+#             KL(p||q) = Ep \log p - \Ep log q
+#     """
+#     def forward(self, output, soft_logits, target=None, temperature=1., alpha=0.9):
+#         output, soft_logits = output / temperature, soft_logits / temperature
+#         soft_target_prob = F.softmax(soft_logits, dim=1)
+#         output_log_prob = F.log_softmax(output, dim=1)
+#         kd_loss = -torch.sum(soft_target_prob * output_log_prob, dim=1)
+#         if target is not None:
+#             n_class = output.size(1)
+#             target = torch.zeros_like(output).scatter(1, target.view(-1, 1), 1)
+#             target = target.unsqueeze(1)
+#             output_log_prob = output_log_prob.unsqueeze(2)
+#             ce_loss = -torch.bmm(target, output_log_prob).squeeze()
+#             loss = alpha * temperature * temperature * kd_loss + (1.0 - alpha) * ce_loss
+#         else:
+#             loss = kd_loss 
+        
+#         if self.reduction == 'mean':
+#             return loss.mean()
+#         elif self.reduction == 'sum':
+#             return loss.sum()
+#         return loss
