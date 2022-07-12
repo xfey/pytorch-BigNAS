@@ -64,7 +64,7 @@ def main(local_rank, world_size):
         )
     # Rule: only regularize the biggest model
     optimizer_no_wd = torch.optim.SGD(
-            net.parameters(),
+            net_params,
             cfg.OPTIM.BASE_LR,
             cfg.OPTIM.MOMENTUM,
             cfg.OPTIM.DAMPENING,
