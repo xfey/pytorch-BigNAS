@@ -1,6 +1,7 @@
 # Implementation adapted from AttentiveNAS: https://github.com/facebookresearch/AttentiveNAS
 # and XNAS: https://github.com/MAC-AutoML/XNAS
 
+import math
 import random
 from copy import deepcopy
 from collections import OrderedDict
@@ -215,6 +216,8 @@ class BigNASDynamicModel(nn.Module):
         self.classifier = DynamicLinearLayer(
             in_features_list=last_channel, out_features=n_classes, bias=True
         )
+        
+        self.init_model()
 
         # set bn param
         self.set_bn_param(momentum=bn_param[0], eps=bn_param[1])
@@ -236,6 +239,30 @@ class BigNASDynamicModel(nn.Module):
                     if isinstance(m.mobile_inverted_conv, DynamicMBConvLayer) and m.shortcut is not None:
                         m.mobile_inverted_conv.point_linear.bn.bn.weight.zero_()
 
+    def init_model(self, model_init="he_fout"):
+        """ Conv2d, BatchNorm2d, BatchNorm1d, Linear, """
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                if model_init == 'he_fout':
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                    m.weight.data.normal_(0, math.sqrt(2. / n))
+                elif model_init == 'he_fin':
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
+                    m.weight.data.normal_(0, math.sqrt(2. / n))
+                else:
+                    raise NotImplementedError
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
+                if m.affine:
+                    m.weight.data.fill_(1)
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                stdv = 1. / math.sqrt(m.weight.size(1))
+                m.weight.data.uniform_(-stdv, stdv)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+    
     @staticmethod
     def name():
         return 'BigNASDynamicModel'

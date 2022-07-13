@@ -3,6 +3,7 @@
 """AttentiveNAS supernet training"""
 
 import os
+import copy
 import random
 
 import torch
@@ -23,8 +24,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 # BigNAS
 from runner.trainer import Trainer
 from runner.scheduler import adjust_learning_rate_per_batch
-from runner.criterion import CrossEntropyLoss_label_smoothed, KLLossSoft
-from bignas.utils import init_model, list_mean
+from runner.criterion import CrossEntropyLoss_label_smoothed, CELossSoft
+from bignas.utils import list_mean
 from bignas.cnn import _BigNAS_CNN
 
 
@@ -39,10 +40,10 @@ def main(local_rank, world_size):
     dist.init_process_group(backend='nccl', rank=local_rank, world_size=world_size)
     # Network
     net = _BigNAS_CNN().to(local_rank)
-    init_model(net)
+    # init_model(net)
     # Loss function
     criterion = CrossEntropyLoss_label_smoothed
-    soft_criterion = KLLossSoft()
+    soft_criterion = CELossSoft()
     
     # Data loaders
     [train_loader, valid_loader] = get_normal_dataloader()
@@ -64,7 +65,7 @@ def main(local_rank, world_size):
         )
     # Rule: only regularize the biggest model
     optimizer_no_wd = torch.optim.SGD(
-            net_params,
+            net.parameters(),
             cfg.OPTIM.BASE_LR,
             cfg.OPTIM.MOMENTUM,
             cfg.OPTIM.DAMPENING,
@@ -132,7 +133,8 @@ class BigNASTrainer(Trainer):
             cur_lr = max(cur_lr, 0.05 * cfg.OPTIM.BASE_LR)
             for param_group in self.optimizer.param_groups:
                 param_group["lr"] = cur_lr
-            # self.writer.add_scalar('train/lr', cur_lr, cur_step)
+            if rank == 0:
+                self.writer.add_scalar('train/lr', cur_lr, cur_step)
             
             ## Sandwich Rule ##
             # Step 1. Largest network sampling & regularization
@@ -141,6 +143,7 @@ class BigNASTrainer(Trainer):
             self.model.module.set_dropout_rate(cfg.TRAIN.DROP_PATH_PROB, cfg.BIGNAS.DROP_CONNECT)
             preds = self.model(inputs)
             loss = self.criterion(preds, labels)
+            _maxnet_loss = copy.deepcopy(loss.item())
             loss.backward()
             self.optimizer.step()
             with torch.no_grad():
@@ -162,6 +165,7 @@ class BigNASTrainer(Trainer):
                 else:
                     loss = self.criterion(preds, labels)
                 loss.backward()
+                _minnet_loss = copy.deepcopy(loss.item())
             nn.utils.clip_grad_norm_(self.model.parameters(), cfg.OPTIM.GRAD_CLIP)
             self.optim_no_wd.step()
             
@@ -172,9 +176,11 @@ class BigNASTrainer(Trainer):
             self.train_meter.update_stats(top1_err, top5_err, loss, cur_lr, inputs.size(0) * cfg.NUM_GPUS)
             self.train_meter.log_iter_stats(cur_epoch, cur_iter)
             self.train_meter.iter_tic()
-            # self.writer.add_scalar('train/loss', i_loss, cur_step)
-            # self.writer.add_scalar('train/top1_error', i_top1err, cur_step)
-            # self.writer.add_scalar('train/top5_error', i_top5err, cur_step)
+            if rank == 0:
+                self.writer.add_scalar('train/max_subnet_loss', _maxnet_loss, cur_step)
+                self.writer.add_scalar('train/min_subnet_loss', _minnet_loss, cur_step)
+                self.writer.add_scalar('train/top1_error', top1_err, cur_step)
+                self.writer.add_scalar('train/top5_error', top5_err, cur_step)
             cur_step += 1
         # Log epoch stats
         self.train_meter.log_epoch_stats(cur_epoch)
@@ -192,6 +198,7 @@ class BigNASTrainer(Trainer):
         for cur_iter, (inputs, labels) in enumerate(self.test_loader):
             inputs, labels = inputs.to(rank), labels.to(rank, non_blocking=True)
             preds = subnet(inputs)
+            loss = self.criterion(preds, labels)
             top1_err, top5_err = meter.topk_errors(preds, labels, [1, 5])
             top1_err, top5_err = top1_err.item(), top5_err.item()
             
@@ -201,12 +208,10 @@ class BigNASTrainer(Trainer):
             self.test_meter.iter_tic()
         top1_err = self.test_meter.mb_top1_err.get_win_avg()
         top5_err = self.test_meter.mb_top5_err.get_win_avg()
-        # self.writer.add_scalar('val/top1_error', self.test_meter.mb_top1_err.get_win_avg(), cur_epoch)
-        # self.writer.add_scalar('val/top5_error', self.test_meter.mb_top5_err.get_win_avg(), cur_epoch)
         # Log epoch stats
         self.test_meter.log_epoch_stats(cur_epoch)
         # self.test_meter.reset()
-        return top1_err, top5_err
+        return top1_err, top5_err, loss.item()
 
 
     def validate(self, cur_epoch, rank, bn_calibration=True):
@@ -215,7 +220,7 @@ class BigNASTrainer(Trainer):
             'bignas_max_net': {},
         }
         
-        top1_list, top5_list = [], []
+        top1_list, top5_list, loss_list = [], [], []
         with torch.no_grad():
             for net_id in subnets_to_be_evaluated:
                 if net_id == 'bignas_min_net': 
@@ -247,9 +252,13 @@ class BigNASTrainer(Trainer):
                         inputs = inputs.to(rank)
                         subnet(inputs)      # forward only                
                 
-                top1_err, top5_err = self.test_epoch(subnet, cur_epoch, rank)
-                top1_list.append(top1_err), top5_list.append(top5_err)
+                top1_err, top5_err, loss = self.test_epoch(subnet, cur_epoch, rank)
+                top1_list.append(top1_err), top5_list.append(top5_err), loss_list.append(loss)
             logger.info("Average@all_subnets top1_err:{} top5_err:{}".format(list_mean(top1_list), list_mean(top5_list)))
+            if rank == 0:
+                self.writer.add_scalar('val/top1_error', list_mean(top1_list), cur_epoch)
+                self.writer.add_scalar('val/top5_error', list_mean(top5_list), cur_epoch)
+                self.writer.add_scalar('val/loss', list_mean(loss_list), cur_epoch)
             if self.best_err > list_mean(top1_list):
                 self.best_err = list_mean(top1_list)
                 self.saving(cur_epoch, best=True)
