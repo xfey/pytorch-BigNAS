@@ -64,24 +64,24 @@ def main(local_rank, world_size):
             cfg.OPTIM.NESTEROV,
         )
     # Rule: only regularize the biggest model
-    optimizer_no_wd = torch.optim.SGD(
-            net.parameters(),
-            cfg.OPTIM.BASE_LR,
-            cfg.OPTIM.MOMENTUM,
-            cfg.OPTIM.DAMPENING,
-            0,  # no weight decay.
-            cfg.OPTIM.NESTEROV,
-        )
+    # optimizer_no_wd = torch.optim.SGD(
+    #         net.parameters(),
+    #         cfg.OPTIM.BASE_LR,
+    #         cfg.OPTIM.MOMENTUM,
+    #         cfg.OPTIM.DAMPENING,
+    #         0,
+    #         cfg.OPTIM.NESTEROV,
+    #     )
     
     net = DDP(net, device_ids=[local_rank], find_unused_parameters=True)
-    
+
     # Initialize Recorder
     bignas_trainer = BigNASTrainer(
         model=net,
         criterion=criterion,
         soft_criterion=soft_criterion,
         optimizer=optimizer,
-        optim_no_wd=optimizer_no_wd,
+        # optim_no_wd=optimizer_no_wd,
         lr_scheduler=None,
         train_loader=train_loader,
         test_loader=valid_loader,
@@ -106,11 +106,10 @@ def main(local_rank, world_size):
 
 class BigNASTrainer(Trainer):
     """Trainer for BigNAS."""
-    def __init__(self, model, criterion, soft_criterion, optimizer, optim_no_wd, lr_scheduler, train_loader, test_loader):
+    def __init__(self, model, criterion, soft_criterion, optimizer, lr_scheduler, train_loader, test_loader):
         super().__init__(model, criterion, optimizer, lr_scheduler, train_loader, test_loader)
         self.sandwich_sample_num = max(2, cfg.BIGNAS.SANDWICH_NUM)    # containing max & min
         self.soft_criterion = soft_criterion
-        self.optim_no_wd = optim_no_wd
 
     def train_epoch(self, cur_epoch, rank=0):
         self.model.train()
@@ -143,14 +142,16 @@ class BigNASTrainer(Trainer):
             self.model.module.set_dropout_rate(cfg.TRAIN.DROP_PATH_PROB, cfg.BIGNAS.DROP_CONNECT)
             preds = self.model(inputs)
             loss = self.criterion(preds, labels)
+            
             _maxnet_loss = copy.deepcopy(loss.item())
             loss.backward()
-            self.optimizer.step()
+            
+            # self.optimizer.step()
             with torch.no_grad():
                 soft_logits = preds.clone().detach()
             
             # Step 2. sample smaller networks
-            self.optim_no_wd.zero_grad()
+            # self.optim_no_wd.zero_grad()
             self.model.module.set_dropout_rate(0, 0)
             for arch_id in range(1, self.sandwich_sample_num):
                 if arch_id == self.sandwich_sample_num - 1:
@@ -167,7 +168,8 @@ class BigNASTrainer(Trainer):
                 loss.backward()
                 _minnet_loss = copy.deepcopy(loss.item())
             nn.utils.clip_grad_norm_(self.model.parameters(), cfg.OPTIM.GRAD_CLIP)
-            self.optim_no_wd.step()
+            # self.optim_no_wd.step()
+            self.optimizer.step()
             
             # calculating errors. The source code of AttentiveNAS uses statistics of the smallest network and XNAS follows.
             top1_err, top5_err = meter.topk_errors(preds, labels, [1, 5])
