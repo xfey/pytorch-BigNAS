@@ -63,6 +63,17 @@ def main(local_rank, world_size):
             cfg.OPTIM.WEIGHT_DECAY,
             cfg.OPTIM.NESTEROV,
         )
+
+    # TODO: using RMSprop as the optimizer
+    # optimizer_rmsprop = torch.optim.RMSprop(
+    #     net_params,
+    #     lr=cfg.OPTIM.BASE_LR,
+    #     alpha=0.99,
+    #     eps=1e-08,
+    #     weight_decay=cfg.OPTIM.WEIGHT_DECAY,
+    #     momentum=cfg.OPTIM.MOMENTUM,
+    # )
+    
     # Rule: only regularize the biggest model
     # optimizer_no_wd = torch.optim.SGD(
     #         net.parameters(),
