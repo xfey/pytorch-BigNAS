@@ -11,7 +11,7 @@ LOADER:
   USE_VAL: True
   TRANSFORM: "auto_augment_tf"
 OPTIM:
-  GRAD_CLIP: 1.
+  GRAD_CLIP: 5.   # attentiveNAS uses 1.
   WARMUP_EPOCH: 5
   MAX_EPOCH: 360
   LR_POLICY: "step"
