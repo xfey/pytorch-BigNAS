@@ -6,6 +6,8 @@
 	<a href="https://img.shields.io/badge/License-MIT-brightgreen"><img src="https://img.shields.io/badge/License-MIT-brightgreen"></a>
 </p>
 
+**Note: ** This code is undergoing testing and related adjustments.
+
 A [PyTorch](http://pytorch.org/) implementation of BigNAS: Scaling Up Neural Architecture Search with Big Single-Stage Models.
 
 > Yu J, Jin P, Liu H, et al. Bignas: Scaling up neural architecture search with big single-stage models[C]//European Conference on Computer Vision. Springer, Cham, 2020: 702-717.
