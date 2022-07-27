@@ -19,6 +19,7 @@ OPTIM:
   BASE_LR: 0.256
   NESTEROV: True
 SEARCH:
+  IM_SIZE: 224
   LOSS_FUN: "cross_entropy_smooth"
   LABEL_SMOOTH: 0.1
 TEST:
