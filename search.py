@@ -76,7 +76,13 @@ def main():
     benchmarks = []
 
     # Phase 1. coarse search
+    _COARSE_TIMES = 0
     for k,subnet_cfg in enumerate(all_subnets):
+        if _COARSE_TIMES >= cfg.BIGNAS.NUM_RANDOM_SEARCH:
+            break
+        else:
+            _COARSE_TIMES += 1
+        
         supernet.set_active_subnet(
             subnet_cfg['resolution'],
             subnet_cfg['width'],
